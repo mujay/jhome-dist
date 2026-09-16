@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JHOME · C2 空間工作台</title>
+<style>
+:root{font-family:"PingFang TC",system-ui,sans-serif;color:#263c39;background:#eeeae3}*{box-sizing:border-box}body{margin:0;height:100dvh;display:flex;flex-direction:column}header{padding:16px 24px;display:flex;align-items:center;gap:24px;background:#faf8f3;border-bottom:1px solid #d9d6cd}h1{font-size:19px;margin:0}small{display:block;font-size:11px;color:#777e76;letter-spacing:2px;margin-bottom:4px}nav{display:flex;gap:4px;background:#e9e8e0;padding:4px;border-radius:10px}button,a{font:inherit;font-size:13px}button{border:0;padding:10px 16px;border-radius:7px;background:transparent;color:#53635d;cursor:pointer}button[aria-pressed=true]{background:#294f47;color:white}a{color:#42665b;text-underline-offset:4px}a:focus-visible,button:focus-visible{outline:3px solid #bd8d42;outline-offset:3px}.links{margin-left:auto;display:flex;gap:16px}.intro{padding:10px 24px;font-size:12px;color:#66736b;display:flex;justify-content:space-between;gap:16px}main{flex:1;min-height:0;position:relative;margin:0 14px 14px;display:grid;gap:12px;grid-template-columns:1fr}section{min-height:0;min-width:0;background:#faf8f3;border:1px solid #d9d6cd;border-radius:10px;overflow:hidden;display:flex;flex-direction:column}section[hidden]{display:none}.bar{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid #deddd4;font-size:12px}.bar b{font-weight:600}.bar a{font-size:11px}iframe{border:0;width:100%;flex:1;min-height:0;background:#e9e9e6}main[data-mode=compare]{grid-template-columns:1fr 1fr}footer{padding:0 24px 10px;font-size:11px;color:#72796f}@media(max-width:1400px){main[data-mode=compare]{grid-template-columns:1fr;grid-template-rows:1fr 1fr}}@media(max-width:760px){header{padding:12px;gap:12px;flex-wrap:wrap}.links{margin-left:0}nav{order:3;width:100%}nav button{flex:1;padding:9px}.intro{padding:8px 14px}.intro span:last-child{display:none}main{margin:0 6px 8px}footer{padding:0 12px 8px}main[data-mode=compare]{overflow:auto;grid-template-rows:65dvh 65dvh}}
+</style>
+</head>
+<body>
+<header>
+<div><small>JHOME / C2</small><h1>空間工作台</h1></div>
+<nav aria-label="檢視模式">
+<button data-mode="plan" aria-pressed="true">2D 平面</button>
+<button data-mode="space" aria-pressed="false">3D 空間</button>
+<button data-mode="compare" aria-pressed="false">對照檢視</button>
+</nav>
+</header>
+<div class="intro"><span id="context" role="status">查尺寸、看配置，再切換 3D 感受空間。</span><span>合謙劃時代 · C2 · 單位 cm</span></div>
+<main data-mode="plan">
+<section id="plan" aria-label="2D 平面圖"><div class="bar"><b>01 / 平面與尺寸</b><a href="plan/index.html" target="_blank" rel="noopener">獨立開啟 ↗</a></div><iframe title="C2 互動平面圖" src="plan/index.html"></iframe></section>
+<section id="space" aria-label="3D 空間模型" hidden><div class="bar"><b>02 / 空間與日照</b><a href="space/index.html" target="_blank" rel="noopener">獨立開啟 ↗</a></div><iframe title="C2 3D 模型" data-src="space/index.html"></iframe></section>
+</main>
+<footer>設計原型 · 面積依模型估算；3D 需網路與 WebGL。對照模式可分別操作兩個視圖。</footer>
+<script>
+const modes = ['plan','space','compare'];
+function select(mode){
+  if(!modes.includes(mode)) mode='plan';
+  document.querySelector('main').dataset.mode=mode;
+  document.querySelector('#plan').hidden=mode==='space';
+  document.querySelector('#space').hidden=mode==='plan';
+  const frame=document.querySelector('#space iframe');
+  if(mode!=='plan'&&!frame.hasAttribute('src')) frame.src=frame.dataset.src;
+  frame.contentWindow.postMessage({type:'jhome-visibility',visible:mode!=='plan'}, '*');
+  document.querySelectorAll('button[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));
+  document.querySelector('#context').textContent={plan:'查尺寸、看配置，再切換 3D 感受空間。',space:'旋轉空間、切換室內視角，或調整日期與時間。',compare:'兩個視圖各自保留操作；寬螢幕左右對照，窄螢幕上下對照。'}[mode];
+}
+document.querySelectorAll('button[data-mode]').forEach(b=>b.addEventListener('click',()=>{location.hash=b.dataset.mode;}));
+document.querySelector('#space iframe').addEventListener('load',()=>select(location.hash.slice(1)));
+window.addEventListener('hashchange',()=>select(location.hash.slice(1)));
+select(location.hash.slice(1));
+</script>
+</body>
+</html>

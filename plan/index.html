@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C2 室內空間平面圖</title>
+<style>
+  :root{
+    --teal:#0b6e78; --brown:#9a5a12; --wall:#1f2a30; --bg:#f4f4f2; --panel:#fff; --line:#ddd;
+    --floor:#faf7f1; --bath:#e4edf3; --balc:#e9f0e3; --furn:#c9ced3; --furnf:#eef0f2;
+  }
+  *{box-sizing:border-box}
+  body{display:flex;flex-direction:column}
+  html,body{margin:0;height:100%;font-family:"PingFang TC","Noto Sans TC","Helvetica Neue",Arial,sans-serif;background:var(--bg);color:#222}
+  header{display:flex;align-items:baseline;gap:16px;padding:10px 18px;background:var(--panel);border-bottom:1px solid var(--line)}
+  header h1{font-size:18px;margin:0}
+  header .sub{font-size:12px;color:#666}
+  header .spacer{flex:1}
+  header button{font:inherit;font-size:12px;padding:5px 10px;border:1px solid #bbb;background:#fff;border-radius:4px;cursor:pointer}
+  header button:hover{background:#f0f0f0}
+  main{display:grid;grid-template-columns:1fr 360px;flex:1;min-height:0}
+  #stage{position:relative;overflow:hidden;background:#e9e9e6}
+  #stage svg{width:100%;height:100%;display:block;cursor:grab}
+  #stage svg.dragging{cursor:grabbing}
+  #hint{position:absolute;left:10px;bottom:8px;font-size:11px;color:#666;background:rgba(255,255,255,.8);padding:3px 8px;border-radius:3px}
+  aside{background:var(--panel);border-left:1px solid var(--line);overflow:auto;padding:12px 14px;font-size:13px}
+  aside h2{font-size:13px;margin:14px 0 6px;color:#444;letter-spacing:.5px}
+  .layers label{display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0;font-size:12px;cursor:pointer}
+  .legend div{display:flex;align-items:center;gap:8px;font-size:12px;margin:3px 0}
+  .legend i{display:inline-block;width:30px;height:0;border-top:2px solid}
+  .legend i.wall{height:8px;background:var(--wall);border:0}
+  .legend i.glass{border-color:#4a90b8;border-top-width:3px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:3px 4px;border-bottom:1px solid #eee;vertical-align:top}
+  th{color:#666;font-weight:600;background:#fafafa;position:sticky;top:0}
+  tr.dimrow{cursor:pointer}
+  tr.dimrow:hover, tr.dimrow.active{background:#fff6e0}
+  td.v{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  td.v.hand{color:var(--teal);font-weight:600}
+  td.v.est{color:var(--brown)}
+  .tag{display:inline-block;font-size:10px;padding:0 4px;border-radius:3px;background:#eee;color:#555;margin-left:4px}
+  .tag.hand{background:#dff0f2;color:var(--teal)}
+  input[type=search]{width:100%;font:inherit;font-size:12px;padding:5px 8px;border:1px solid #ccc;border-radius:4px;margin:6px 0}
+  .note{font-size:11px;color:#777;line-height:1.5}
+  /* SVG 樣式 */
+  .dim line{stroke-width:1.1}
+  .dim text{font-size:12px}
+  .dim.hand line{stroke:var(--teal)} .dim.hand text{fill:var(--teal)}
+  .dim.est line{stroke:var(--brown)} .dim.est text{fill:var(--brown)}
+  .dim.hl line{stroke:#d33;stroke-width:2.2} .dim.hl text{fill:#d33;font-weight:700;font-size:14px}
+  .dim.hl rect.bg{fill:#ffe9e9}
+  .doorlab text{font-size:9px;fill:var(--brown)}
+  .roomlab text{font-size:18px;font-weight:700;fill:#222}
+  .arealab text{font-size:10px;fill:#666}
+  .furnlab text{font-size:9px;fill:#555}
+  #stage svg{touch-action:none}
+  @media(max-width:850px){
+    header{flex-wrap:wrap;gap:8px}header .sub{display:none}
+    main{grid-template-columns:1fr;grid-template-rows:minmax(280px,60%) 1fr}
+    aside{border-left:0;border-top:1px solid var(--line)}
+  }
+  @media print{
+    header button,#hint,aside .layers,aside input{display:none}
+    main{grid-template-columns:1fr;height:auto}
+    #stage{height:180mm;background:#fff}
+    aside{border:0}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>C2 室內空間平面圖</h1>
+  <span class="sub">單位 cm。藍綠 = 手寫／使用者確認；棕「約」= 依原圖比例推估（1.105 px/cm，400 校正，±5%）。臥室B 門為右鉸鏈（依 fix.png）。</span>
+  <span class="spacer"></span>
+  <button id="btnFit">重設視圖</button>
+  <button id="btnPrint">列印 / PDF</button>
+</header>
+<main>
+  <div id="stage">
+    <svg id="plan" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="hint">滾輪縮放、拖曳平移。將滑鼠移到右側表格列，圖上對應尺寸會反紅。</div>
+  </div>
+  <aside>
+    <h2>圖層</h2>
+    <div class="layers">
+      <label><input type="checkbox" data-layer="dims" checked>尺寸線</label>
+      <label><input type="checkbox" data-layer="dims-est" checked>推估尺寸</label>
+      <label><input type="checkbox" data-layer="doorlab" checked>門窗開口</label>
+      <label><input type="checkbox" data-layer="furn" checked>家具</label>
+      <label><input type="checkbox" data-layer="roomlab" checked>房間名</label>
+      <label><input type="checkbox" data-layer="arealab" checked>面積</label>
+    </div>
+    <h2>圖例</h2>
+    <div class="legend">
+      <div><i style="border-color:var(--teal)"></i>手寫照片／使用者確認尺寸</div>
+      <div><i style="border-color:var(--brown)"></i>約 = 依原圖比例推估</div>
+      <div><i class="wall"></i>牆體（外牆 15、隔間 8–18，推估）</div>
+      <div><i class="glass"></i>窗／玻璃隔間</div>
+    </div>
+    <h2>房間面積（依模型估算，已扣牆柱）</h2>
+    <table id="areaTbl"><thead><tr><th>房間</th><th style="text-align:right">m²</th><th style="text-align:right">坪</th></tr></thead><tbody></tbody></table>
+    <h2>尺寸表</h2><p class="note">確認值與模型差異：F01 矮櫃 150／148 cm；F04 上側衣櫃 145／139 cm。保留確認值，建模端點待核對。</p>
+    <input type="search" id="q" placeholder="搜尋編號或位置，例如 K01、臥室C">
+    <table id="dimTbl"><thead><tr><th>編號</th><th>位置</th><th style="text-align:right">cm</th></tr></thead><tbody></tbody></table>
+    <h2>門／開口</h2>
+    <table id="doorTbl"><thead><tr><th>編號</th><th>位置</th><th style="text-align:right">cm</th></tr></thead><tbody></tbody></table>
+    <p class="note">尺寸表與圖面同源（plan_data.js）。「約」為推估，訂製前以現場實測為準。</p>
+  </aside>
+</main>
+<script src="../generated/plan_data.js"></script>
+<script>
+(function(){
+  const P = window.PLAN;
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.getElementById("plan");
+  const EXT = P.ext_wall;
+  const el = (n, attrs, parent) => { const e = document.createElementNS(NS, n); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent||svg).appendChild(e); return e; };
+  const g = (cls, parent) => el("g", {class: cls}, parent);
+  const rect = (p, x0,y0,x1,y1, fill, stroke, sw) => el("rect", {x:Math.min(x0,x1), y:Math.min(y0,y1), width:Math.abs(x1-x0), height:Math.abs(y1-y0), fill, stroke: stroke||"none", "stroke-width": sw||0}, p);
+  const line = (p, x0,y0,x1,y1, stroke, sw, dash) => { const a={x1:x0,y1:y0,x2:x1,y2:y1,stroke,"stroke-width":sw||1,"stroke-linecap":"round"}; if(dash) a["stroke-dasharray"]=dash; return el("line", a, p); };
+  const textW = s => [...s].reduce((w,c)=>w+(c.charCodeAt(0)<128?0.62:1),0);
+  function text(p, x, y, s, size, fill, opt){
+    opt = opt||{};
+    const anchor = opt.anchor||"middle";
+    const tr = opt.rot ? `rotate(${opt.rot} ${x} ${y})` : null;
+    if (opt.bg !== false){
+      const w = textW(s)*size+6;
+      const bx = anchor==="middle" ? x-w/2 : (anchor==="start" ? x-3 : x-w+3);
+      const r = el("rect", {class:"bg", x:bx, y:y-size*0.85, width:w, height:size*1.15, fill:"white", "fill-opacity":0.85, rx:2}, p);
+      if (tr) r.setAttribute("transform", tr);
+    }
+    const t = el("text", {x, y, "font-size":size, fill: fill||"#222", "text-anchor":anchor, "font-weight": opt.weight||"normal"}, p);
+    if (tr) t.setAttribute("transform", tr);
+    t.textContent = s; return t;
+  }
+
+  // ---- 圖層 ----
+  const L = {};
+  for (const k of ["floor","furn","furnlab","walls","open","doors","doorlab","roomlab","arealab","dims","misc"]) L[k] = g("layer "+k);
+
+  // 地坪
+  for (const room of P.room_areas) {
+    const fill = /浴室/.test(room.name) ? "var(--bath)" : /陽台/.test(room.name) ? "var(--balc)" : "var(--floor)";
+    for (const r of room.rects) rect(L.floor, ...r, fill);
+  }
+
+  // 家具
+  for (const f of P.furniture){
+    rect(L.furn, f.x0,f.y0,f.x1,f.y1, "var(--furnf)", "var(--furn)", 1);
+    if (/closet|entry_cab/.test(f.id)){
+      if (f.x1-f.x0 > f.y1-f.y0) for (let x=f.x0+10; x<f.x1; x+=12) line(L.furn, x,f.y0+4,x,f.y1-4,"#aab",0.8);
+      else for (let y=f.y0+10; y<f.y1; y+=12) line(L.furn, f.x0+4,y,f.x1-4,y,"#aab",0.8);
+    }
+  }
+  const furnLabels = [[672,750,"玄關櫃",-90],[570,609,"餐邊櫃"],[876,381,"矮櫃"],[636,150,"電視櫃",-90],[215,446,"爐台"],[355,446,"水槽"],[359,592,"冰箱"],[45,465,"AC"],[45,515,"AC"],[285,175,"床"],[507,120,"床"],[275,780,"床"],[920,210,"沙發",-90],[560,505,"餐桌",-90]];
+  for (const [x,y,s,rot] of furnLabels) text(L.furnlab, x,y,s,9,"#555",{rot, bg:false});
+
+  // 牆、窗、欄杆、玻璃
+  for (const w of P.walls) rect(L.walls, w.x0,w.y0,w.x1,w.y1, "var(--wall)");
+  for (const w of P.side_walls || []) rect(L.walls, w.x0,w.y0,w.x1,w.y1, "var(--wall)");
+  for (const w of P.windows){
+    rect(L.open, w.x0,w.y0,w.x1,w.y1,"white");
+    if (w.x1-w.x0 > w.y1-w.y0){ const cy=(w.y0+w.y1)/2; line(L.open,w.x0,w.y0,w.x1,w.y0,"#333",1); line(L.open,w.x0,w.y1,w.x1,w.y1,"#333",1); line(L.open,w.x0,cy,w.x1,cy,"#4a90b8",1.4); }
+    else { const cx=(w.x0+w.x1)/2; line(L.open,w.x0,w.y0,w.x0,w.y1,"#333",1); line(L.open,w.x1,w.y0,w.x1,w.y1,"#333",1); line(L.open,cx,w.y0,cx,w.y1,"#4a90b8",1.4); }
+  }
+  for (const r of P.railings){
+    if (r.kind === "glass") rect(L.open,r.x0,r.y0,r.x1,r.y1,"#bcd6e4","#4a90b8",1.2);
+    else rect(L.open,r.x0,r.y0,r.x1,r.y1,"#7a7f84");
+  }
+  for (const gl of P.glass) line(L.open, gl.x0,gl.y0,gl.x1,gl.y1,"#4a90b8",2.5);
+  for (const o of P.openings){ rect(L.open,o.x0,o.y0,o.x1,o.y1,"var(--floor)"); line(L.open,o.x0,o.y0,o.x1,o.y0,"#888",0.8,"3 3"); line(L.open,o.x0,o.y1,o.x1,o.y1,"#888",0.8,"3 3"); }
+
+  // 門
+  for (const d of P.doors){
+    const [hx,hy]=d.hinge, [lx,ly]=d.leaf_to, [ax,ay]=d.arc_from;
+    const r = Math.hypot(lx-hx, ly-hy);
+    line(L.doors, hx,hy,lx,ly,"#333",2.2);
+    const cross=(ax-hx)*(ly-hy)-(ay-hy)*(lx-hx); const sweep = cross>0?1:0;
+    el("path", {d:`M ${ax} ${ay} A ${r} ${r} 0 0 ${sweep} ${lx} ${ly}`, fill:"none", stroke:"#333", "stroke-width":1, "stroke-dasharray":"4 3"}, L.doors);
+    const mx=(hx+ax)/2, my=(hy+ay)/2;
+    text(L.doorlab, mx, my+(hy===ay?14:0), `${d.id} 約${d.width}`, 9, "var(--brown)", {rot: hx===ax?-90:null});
+  }
+
+  // 房間名 + 面積
+  for (const r of P.rooms) text(L.roomlab, r.x, r.y, r.name, 18, "#222", {weight:700, bg:false});
+  const areaRows = [];
+  for (const ra of P.room_areas){
+    const cm2 = ra.rects.reduce((s,[x0,y0,x1,y1])=>s+(x1-x0)*(y1-y0),0);
+    const m2 = cm2/10000, ping = m2/3.30579;
+    areaRows.push([ra.name, m2, ping]);
+    const rm = P.rooms.find(r=>r.name===ra.name || ra.name.startsWith(r.name));
+    if (rm) text(L.arealab, rm.x, rm.y+16, `${m2.toFixed(1)} m² / ${ping.toFixed(1)} 坪`, 10, "#666", {bg:false});
+  }
+
+  // 尺寸線
+  const dimEls = {};
+  function dim(d){
+    const kind = (d.kind==="hand"||d.kind==="user") ? "hand" : "est";
+    const grp = g(`dim ${kind}`, L.dims); grp.dataset.id = d.id; dimEls[d.id]=grp;
+    const val = kind==="hand" ? `${d.v}` : `約${d.v}`;
+    const lab = `${d.id} ${val}`;
+    const {a,b,pos:p} = d;
+    if (d.text_only){
+      if (d.orient==="h") text(grp,(a+b)/2,p,lab,10,null); else text(grp,p,(a+b)/2,lab,10,null,{rot:-90});
+      return;
+    }
+    if (d.orient==="h"){
+      line(grp,a,p,b,p); for (const x of [a,b]){ line(grp,x,p-6,x,p+6); line(grp,x-4,p+4,x+4,p-4); }
+      text(grp,(a+b)/2,p-5,lab,12,null);
+    } else {
+      line(grp,p,a,p,b); for (const y of [a,b]){ line(grp,p-6,y,p+6,y); line(grp,p-4,y+4,p+4,y-4); }
+      text(grp,p-5,(a+b)/2,lab,12,null,{rot:-90});
+    }
+    const title = el("title",{},grp); title.textContent = `${d.id} ${d.label}：${val} cm`;
+  }
+  for (const d of P.dims) dim(d);
+
+  // 指北、入口
+  line(L.misc,1040,-180,1040,-240,"var(--teal)",3); el("polygon",{points:"1032,-232 1040,-250 1048,-232",fill:"var(--teal)"},L.misc); text(L.misc,1040,-165,"北",14,"var(--teal)",{bg:false});
+  el("polygon",{points:"742,928 742,915 732,915 746,900 760,915 750,915 750,928",fill:"var(--teal)"},L.misc); text(L.misc,746,942,"入口",11,"var(--teal)",{bg:false});
+
+  // ---- 視圖：縮放平移 ----
+  const BOX = {x:-140, y:-270, w:1220, h:1290};
+  let vb = {...BOX};
+  const apply = () => svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  function fit(){ const r=svg.getBoundingClientRect(); const ar=r.width/r.height; if(!r.width || !r.height) return; vb={...BOX}; if (BOX.w/BOX.h < ar){ vb.w = BOX.h*ar; vb.x = BOX.x-(vb.w-BOX.w)/2; } else { vb.h = BOX.w/ar; vb.y = BOX.y-(vb.h-BOX.h)/2; } apply(); }
+  fit();
+  new ResizeObserver(() => {
+    const r=svg.getBoundingClientRect(); if(!r.width || !r.height) return;
+    const cx=vb.x+vb.w/2; vb.w=vb.h*r.width/r.height; vb.x=cx-vb.w/2; apply();
+  }).observe(svg);
+  document.getElementById("btnFit").onclick = fit;
+  document.getElementById("btnPrint").onclick = () => window.print();
+  svg.addEventListener("wheel", e => { e.preventDefault(); const r=svg.getBoundingClientRect(); const mx=vb.x+(e.clientX-r.left)/r.width*vb.w, my=vb.y+(e.clientY-r.top)/r.height*vb.h; const k = e.deltaY>0?1.12:1/1.12; vb.w*=k; vb.h*=k; vb.x = mx-(mx-vb.x)*k; vb.y = my-(my-vb.y)*k; apply(); }, {passive:false});
+  let drag=null;
+  svg.addEventListener("pointerdown", e => { drag={x:e.clientX,y:e.clientY,vx:vb.x,vy:vb.y}; svg.classList.add("dragging"); svg.setPointerCapture(e.pointerId); });
+  svg.addEventListener("pointermove", e => { if(!drag) return; const r=svg.getBoundingClientRect(); vb.x = drag.vx-(e.clientX-drag.x)/r.width*vb.w; vb.y = drag.vy-(e.clientY-drag.y)/r.height*vb.h; apply(); });
+  const stopDrag = () => { drag=null; svg.classList.remove("dragging"); };
+  svg.addEventListener("pointerup", stopDrag);
+  svg.addEventListener("pointercancel", stopDrag);
+  svg.addEventListener("lostpointercapture", stopDrag);
+
+  // ---- 圖層切換 ----
+  document.querySelectorAll("[data-layer]").forEach(cb => cb.addEventListener("change", () => {
+    const k = cb.dataset.layer;
+    if (k==="dims-est") L.dims.querySelectorAll(".dim.est").forEach(x => x.style.display = cb.checked?"":"none");
+    else L[k].style.display = cb.checked?"":"none";
+    if (k === "furn") L.furnlab.style.display = cb.checked?"":"none";
+  }));
+
+  // ---- 表格 ----
+  const areaBody = document.querySelector("#areaTbl tbody");
+  let tm=0, tp=0;
+  for (const [n,m2,p] of areaRows){ tm+=m2; tp+=p; areaBody.insertAdjacentHTML("beforeend", `<tr><td>${n}</td><td class="v">${m2.toFixed(2)}</td><td class="v">${p.toFixed(2)}</td></tr>`); }
+  areaBody.insertAdjacentHTML("beforeend", `<tr><td><b>合計（含陽台）</b></td><td class="v"><b>${tm.toFixed(2)}</b></td><td class="v"><b>${tp.toFixed(2)}</b></td></tr>`);
+
+  const dimBody = document.querySelector("#dimTbl tbody");
+  const rows = [];
+  for (const d of P.dims){
+    const kind = (d.kind==="hand"||d.kind==="user") ? "hand" : "est";
+    const tr = document.createElement("tr"); tr.className="dimrow"; tr.dataset.id=d.id;
+    tr.innerHTML = `<td>${d.id}</td><td>${d.label}${kind==="hand"?'<span class="tag hand">'+(d.kind==="hand"?"手寫":"確認")+'</span>':''}</td><td class="v ${kind}">${kind==="hand"?d.v:"約"+d.v}</td>`;
+    tr.addEventListener("mouseenter", () => hl(d.id,true)); tr.addEventListener("mouseleave", () => hl(d.id,false));
+    tr.addEventListener("click", () => zoomTo(d));
+    dimBody.appendChild(tr); rows.push(tr);
+  }
+  function hl(id,on){ const e=dimEls[id]; if(!e) return; e.classList.toggle("hl",on); if(on) e.parentNode.appendChild(e); }
+  function zoomTo(d){ const cx = d.orient==="h"?(d.a+d.b)/2:d.pos, cy = d.orient==="h"?d.pos:(d.a+d.b)/2; const r=svg.getBoundingClientRect(); const ar=r.width/r.height; vb.h=450; vb.w=450*ar; vb.x=cx-vb.w/2; vb.y=cy-vb.h/2; apply(); }
+  document.getElementById("q").addEventListener("input", e => { const q=e.target.value.trim().toLowerCase(); for (const tr of rows) tr.style.display = (!q || tr.textContent.toLowerCase().includes(q)) ? "" : "none"; });
+  // 圖上 hover 反向高亮表格
+  for (const id in dimEls){ dimEls[id].addEventListener("mouseenter", () => { hl(id,true); rows.find(r=>r.dataset.id===id)?.classList.add("active"); }); dimEls[id].addEventListener("mouseleave", () => { hl(id,false); rows.find(r=>r.dataset.id===id)?.classList.remove("active"); }); }
+
+  const doorBody = document.querySelector("#doorTbl tbody");
+  for (const d of [...P.doors, ...P.openings]) doorBody.insertAdjacentHTML("beforeend", `<tr><td>${d.id}</td><td>${d.name}</td><td class="v est">約${d.width}</td></tr>`);
+})();
+</script>
+</body>
+</html>
