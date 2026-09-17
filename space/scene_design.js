@@ -18,15 +18,15 @@ window.SCENE_DESIGN = {
   // Fixture positions [x,z]; light source lies below the mounting surface.
   circuits: [
     {id:'living',name:'客廳',kind:'track',label:'暖白軌道投射燈',color:0xffdfb5,points:[[735,100],[735,220],[735,340]],power:26000},
-    {id:'dining',name:'餐廳',kind:'pendant',label:'餐桌吊燈',color:0xffd5a0,points:[[580,544]],power:21000},
-    {id:'kitchen',name:'廚房',kind:'downlight',label:'中性白工作照明',color:0xfff0d9,points:[[280,450],[280,580]],power:23000},
+    {id:'dining',name:'餐廳',kind:'track',label:'暖白軌道投射燈',color:0xffd5a0,points:[[580,500],[580,544],[580,588]],power:13000},
+    {id:'kitchen',name:'廚房',kind:'recessed',label:'廚房嵌燈',color:0xfff0d9,points:[[212,486],[348,486],[212,558],[330,558]],power:13000},
     {id:'bedA',name:'臥室 A',kind:'downlight',label:'暖白廣角吸頂燈',color:0xffdfb5,points:[[275,255]],power:35000},
     {id:'bedB',name:'臥室 B',kind:'downlight',label:'暖白廣角吸頂燈',color:0xffdfb5,points:[[520,200]],power:26000},
     {id:'bedC',name:'臥室 C',kind:'downlight',label:'暖白廣角吸頂燈',color:0xffdfb5,points:[[420,750]],power:35000},
     {id:'storage',name:'儲藏室',kind:'downlight',label:'儲藏室吸頂燈',color:0xfff0d9,points:[[550,780]],power:16000},
     {id:'entry',name:'玄關',kind:'downlight',label:'走道投射燈＋櫃內燈帶',color:0xffdfb5,points:[[730,690],[730,820]],power:18000},
-    {id:'bathA',name:'浴室 A',kind:'downlight',label:'防潮吸頂燈',color:0xfff0d9,points:[[70,160]],power:22000},
-    {id:'bathB',name:'浴室 B',kind:'downlight',label:'防潮吸頂燈',color:0xfff0d9,points:[[880,535]],power:22000},
+    {id:'bathA',name:'浴室 A',kind:'recessed',label:'防潮嵌燈',color:0xfff0d9,points:[[70,160]],power:22000},
+    {id:'bathB',name:'浴室 B',kind:'recessed',label:'防潮嵌燈',color:0xfff0d9,points:[[880,535]],power:22000},
     {id:'front',name:'前陽台',kind:'wall',label:'戶外壁燈',color:0xffdfb5,points:[[632,-60]],power:13000},
     {id:'utility',name:'工作陽台',kind:'wall',label:'防潮壁燈',color:0xfff0d9,points:[[132,610]],power:16000}
   ]

@@ -137,35 +137,186 @@ function makeTex(key, w, h, draw, repX, repY){
   t.anisotropy = 8;
   texCache[key] = t; return t;
 }
-const rnd = (a,b) => a + Math.random()*(b-a);
+// Stable surface patterns across reloads.
+let textureSeed = 17391;
+const rnd = (a,b) => {
+  textureSeed = (Math.imul(1664525,textureSeed)+1013904223) >>> 0;
+  return a + (textureSeed / 4294967296)*(b-a);
+};
 
-// 木地板：長條拼接 + 木紋
-function woodFloorTex(base, dark, key, planks){
-  return makeTex(key, 1024, 1024, (x,w,h) => {
-    x.fillStyle = base; x.fillRect(0,0,w,h);
-    const rows = planks || 6, rh = h/rows;
-    for (let r=0; r<rows; r++){
-      const off = (r%2) * w*0.37;
-      for (let seg=-1; seg<3; seg++){
-        const px = off + seg*w*0.62, pw = w*0.62;
-        x.save(); x.beginPath(); x.rect(px, r*rh, pw, rh); x.clip();
-        const sh = rnd(-10,10);
-        x.fillStyle = shade(base, sh); x.fillRect(px, r*rh, pw, rh);
-        // 木紋線
-        for (let i=0;i<22;i++){
-          x.strokeStyle = `rgba(${hexRGB(dark)},${rnd(.05,.18)})`;
-          x.lineWidth = rnd(.6,2.2); x.beginPath();
-          const y0 = r*rh + rnd(0,rh);
-          x.moveTo(px, y0);
-          x.bezierCurveTo(px+pw*.3, y0+rnd(-5,5), px+pw*.7, y0+rnd(-5,5), px+pw, y0+rnd(-4,4));
-          x.stroke();
-        }
-        x.restore();
-        x.strokeStyle = `rgba(${hexRGB(dark)},.42)`; x.lineWidth = 2;
-        x.strokeRect(px, r*rh, pw, rh);
+// 線性資料貼圖（凹凸／粗糙度），不做 sRGB 解讀
+function dataTex(size, draw){
+  const c = document.createElement("canvas"); c.width = c.height = size;
+  draw(c.getContext("2d"), size, size);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.NoColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+  return t;
+}
+// 由彩色貼圖取亮度當凹凸，供無專屬高度圖的材質共用
+function bumpFrom(texture, size){
+  const c = document.createElement("canvas"); c.width = c.height = size;
+  const x = c.getContext("2d"); x.drawImage(texture.image, 0, 0, size, size);
+  const d = x.getImageData(0, 0, size, size);
+  for (let i=0;i<d.data.length;i+=4){
+    const v = (d.data[i]*.2126 + d.data[i+1]*.7152 + d.data[i+2]*.0722)|0;
+    d.data[i] = d.data[i+1] = d.data[i+2] = v;
+  }
+  x.putImageData(d, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.NoColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+  return t;
+}
+// 木地板：錯縫實木拼接。一張貼圖對應 380 cm × 380 cm，20 排 → 板寬 19 cm。
+// 色彩 2048、凹凸與粗糙度 1024，同一迴圈產生故三者對齊；全場景只生成一次。
+const FLOOR_TILE = 380;
+function woodFloorMaps(base, dark){
+  if (texCache.floorWoodSet) return texCache.floorWoodSet;
+  const S = 2048, ROWS = 20, rh = S/ROWS, PX = S/FLOOR_TILE;      // PX：每 cm 的像素
+  const surf = size => {
+    const c = document.createElement("canvas"); c.width = c.height = size;
+    const g = c.getContext("2d"); g.scale(size/S, size/S); return {c, g};
+  };
+  const col = surf(S), bmp = surf(1024), rgh = surf(1024);
+  const c = col.g, b = bmp.g, r = rgh.g, all = [c, b, r];
+  c.fillStyle = base; c.fillRect(0,0,S,S);
+  b.fillStyle = "#808080"; b.fillRect(0,0,S,S);
+  r.fillStyle = "#c8c8c8"; r.fillRect(0,0,S,S);
+  const dn = parseInt(dark.slice(1),16);
+  const deep = `${Math.max(0,(dn>>16&255)-48)},${Math.max(0,(dn>>8&255)-48)},${Math.max(0,(dn&255)-48)}`;
+  const tint = (hex, dl, dw) => { const n = parseInt(hex.slice(1),16), cl = v => Math.max(0, Math.min(255, Math.round(v)));
+    return `rgb(${cl((n>>16&255)+dl+dw)},${cl((n>>8&255)+dl)},${cl((n&255)+dl-dw)})`; };
+  // 單塊板：底色微差、細密平行紋、大教堂弧紋、偶發節疤、四邊 V 溝
+  function plank(px, py, pw, ph, tone, warm){
+    all.forEach(g => { g.save(); g.beginPath(); g.rect(px,py,pw,ph); g.clip(); });
+    c.fillStyle = tint(base, tone, warm); c.fillRect(px,py,pw,ph);
+    const bl = 128 + Math.round(rnd(-4,4)); b.fillStyle = `rgb(${bl},${bl},${bl})`; b.fillRect(px,py,pw,ph);
+    const rl = Math.max(150, Math.min(250, 202 + Math.round(rnd(-12,12)) - tone));
+    r.fillStyle = `rgb(${rl},${rl},${rl})`; r.fillRect(px,py,pw,ph);
+    const lines = Math.round(ph/PX*2.2);
+    for (let i=0;i<lines;i++){
+      const gy = py + rnd(0,ph), w1 = rnd(-1.4,1.4)*PX, w2 = rnd(-1.4,1.4)*PX, w3 = rnd(-1,1)*PX;
+      const a = rnd(.06,.2), lw = rnd(.5,1.9);
+      const path = g => { g.beginPath(); g.moveTo(px,gy);
+        g.bezierCurveTo(px+pw*.33, gy+w1, px+pw*.66, gy+w2, px+pw, gy+w3); g.stroke(); };
+      c.strokeStyle = `rgba(${hexRGB(dark)},${a})`; c.lineWidth = lw; path(c);
+      b.strokeStyle = `rgba(64,64,64,${a*.7})`; b.lineWidth = lw; path(b);
+      if (i%3 === 0){ r.strokeStyle = `rgba(250,250,250,${a*1.5})`; r.lineWidth = lw; path(r); }
+    }
+    for (let k=0, arcs = rnd(0,1)<.65 ? 1 : 2; k<arcs; k++){
+      const ax = px + rnd(pw*.15, pw*.85), ay = py + rnd(ph*.3, ph*.8);
+      const aw = rnd(.22,.46)*pw, ah = rnd(.2,.42)*ph;
+      for (let q=0;q<7;q++){
+        const t = q/7, ww = aw*(1-t*.55), hh = ah*(1-t*.5), a2 = rnd(.07,.16), lw = rnd(1.2,3.2);
+        const path = g => { g.beginPath(); g.moveTo(ax-ww, ay+hh);
+          g.quadraticCurveTo(ax, ay-hh*1.9, ax+ww, ay+hh); g.stroke(); };
+        c.strokeStyle = `rgba(${hexRGB(dark)},${a2})`; c.lineWidth = lw; path(c);
+        b.strokeStyle = `rgba(70,70,70,${a2*.8})`; b.lineWidth = lw; path(b);
       }
     }
-  }, 6, 6);
+    if (rnd(0,1) < .12){                                            // 小節疤
+      const kx = px + rnd(pw*.1, pw*.9), ky = py + rnd(ph*.28, ph*.72), kr = rnd(1.1,2.6)*PX;
+      for (let q=4;q>=1;q--){
+        const rr = kr*q/4, a3 = rnd(.14,.3);
+        c.strokeStyle = `rgba(${hexRGB(dark)},${a3})`; c.lineWidth = rnd(1,2.6);
+        c.beginPath(); c.ellipse(kx,ky,rr,rr*.62,.6,0,7); c.stroke();
+        b.strokeStyle = `rgba(56,56,56,${a3})`; b.lineWidth = rnd(1,2.6);
+        b.beginPath(); b.ellipse(kx,ky,rr,rr*.62,.6,0,7); b.stroke();
+      }
+    }
+    const gw = Math.max(1.8, .32*PX);                               // V 溝：暗線 + 內側亮線
+    c.strokeStyle = `rgba(${deep},.62)`; c.lineWidth = gw*2; c.strokeRect(px,py,pw,ph);
+    c.strokeStyle = "rgba(255,252,246,.3)"; c.lineWidth = 1.2; c.strokeRect(px+gw, py+gw, pw-gw*2, ph-gw*2);
+    b.strokeStyle = "rgba(34,34,34,.9)"; b.lineWidth = gw*2; b.strokeRect(px,py,pw,ph);
+    b.strokeStyle = "rgba(214,214,214,.7)"; b.lineWidth = 1.2; b.strokeRect(px+gw, py+gw, pw-gw*2, ph-gw*2);
+    r.strokeStyle = "rgba(252,252,252,.55)"; r.lineWidth = gw*2; r.strokeRect(px,py,pw,ph);
+    all.forEach(g => g.restore());
+  }
+  const gap = (a, bv) => { const d = Math.abs(a-bv)%S; return Math.min(d, S-d); };
+  let prevSeams = [];
+  for (let row=0; row<ROWS; row++){
+    const y0 = row*rh, n = rnd(0,1) < .45 ? 2 : 3, jit = n === 2 ? .12 : .05;
+    const raw = []; let total = 0;
+    for (let i=0;i<n;i++){ const v = rnd(1-jit, 1+jit); raw.push(v); total += v; }
+    const lens = raw.map(v => v/total*S);                            // 每排板長總和剛好一格，故可無縫平鋪
+    let phase = rnd(0,S), seams = [];
+    for (let attempt=0; attempt<6; attempt++){                       // 錯縫：與上一排接縫至少差 28 cm
+      let p = phase; seams = lens.map(L => { const s = ((p%S)+S)%S; p += L; return s; });
+      if (seams.every(t => prevSeams.every(s => gap(t,s) > 28*PX))) break;
+      phase = rnd(0,S);
+    }
+    prevSeams = seams;
+    let x = phase;
+    for (const L of lens){
+      const tone = rnd(-7,6) + (rnd(0,1) < .18 ? -16 : 0), warm = rnd(-3,3), seed = textureSeed;
+      for (const k of [-1,0,1]){
+        const px = x + k*S;
+        if (px+L < -4 || px > S+4) continue;
+        textureSeed = seed; plank(px, y0, L, rh, tone, warm);
+      }
+      x += L;
+    }
+  }
+  const map = new THREE.CanvasTexture(col.c);
+  map.colorSpace = THREE.SRGBColorSpace; map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(1,1); map.anisotropy = 8;
+  const wrap = canvas => { const t = new THREE.CanvasTexture(canvas);
+    t.colorSpace = THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; return t; };
+  return texCache.floorWoodSet = {map, bumpMap: wrap(bmp.c), roughnessMap: wrap(rgh.c)};
+}
+// 皮革底紋：細顆粒皮紋 + 輕微色斑（IKEA LANDSKRONA Grann/Bomstad 金棕）
+function leatherGrain(x, w, h, base, dark){
+  x.fillStyle = base; x.fillRect(0,0,w,h);
+  for (let i=0;i<70;i++){                                   // 色斑
+    x.fillStyle = rnd(0,1) > .45 ? `rgba(${hexRGB(dark)},${rnd(.02,.06)})` : `rgba(255,230,196,${rnd(.02,.05)})`;
+    x.beginPath(); x.ellipse(rnd(0,w), rnd(0,h), rnd(16,70), rnd(12,56), rnd(0,3), 0, 7); x.fill();
+  }
+  for (let i=0;i<3200;i++){                                 // 皮紋顆粒（短弧交錯）
+    const px = rnd(0,w), py = rnd(0,h), rr = rnd(1.4,4.6);
+    x.strokeStyle = rnd(0,1) > .5 ? `rgba(255,236,214,${rnd(.03,.09)})` : `rgba(${hexRGB(dark)},${rnd(.04,.12)})`;
+    x.lineWidth = rnd(.6,1.4);
+    x.beginPath(); x.arc(px, py, rr, rnd(0,6), rnd(2,8)); x.stroke();
+  }
+  for (let i=0;i<2600;i++){                                 // 毛孔
+    x.fillStyle = `rgba(92,54,26,${rnd(.02,.07)})`; x.fillRect(rnd(0,w), rnd(0,h), 1, 1);
+  }
+}
+function leatherTex(base, dark, key){
+  return makeTex(key, 512, 512, (x,w,h) => leatherGrain(x,w,h,base,dark), 1, 1);
+}
+// 格狀拉扣（tufted）：每個面各一格網，cols × rows 由家具方位決定
+// center 為扣點之間的鼓起，edge 為靠近縫線的凹陷，seam／button 為縫線與拉扣點。
+function tuftMaps(cols, rows, base, dark){
+  const key = `tuft${cols}x${rows}`;
+  if (texCache[key+"Set"]) return texCache[key+"Set"];
+  const seed = textureSeed;
+  const cells = (g, w, h, center, halo, edge, seam, button) => {
+    const cw = w/cols, ch = h/rows;
+    for (let i=0;i<cols;i++) for (let j=0;j<rows;j++){
+      const px = (i+.5)*cw, py = (j+.5)*ch;
+      const grad = g.createRadialGradient(px, py, Math.min(cw,ch)*.08, px, py, Math.max(cw,ch)*.7);
+      grad.addColorStop(0, center); grad.addColorStop(.45, halo); grad.addColorStop(1, edge);
+      g.fillStyle = grad; g.fillRect(i*cw, j*ch, cw, ch);
+    }
+    g.strokeStyle = seam; g.lineWidth = 4;
+    for (let i=0;i<=cols;i++){ g.beginPath(); g.moveTo(i*cw,0); g.lineTo(i*cw,h); g.stroke(); }
+    for (let j=0;j<=rows;j++){ g.beginPath(); g.moveTo(0,j*ch); g.lineTo(w,j*ch); g.stroke(); }
+    for (let i=0;i<=cols;i++) for (let j=0;j<=rows;j++){
+      g.fillStyle = button; g.beginPath(); g.arc(i*cw, j*ch, 6, 0, 7); g.fill();
+    }
+  };
+  const map = makeTex(key+"C", 512, 512, (x,w,h) => {
+    textureSeed = seed; leatherGrain(x,w,h,base,dark);
+    cells(x, w, h, "rgba(255,226,186,.13)", `rgba(${hexRGB(dark)},0)`,
+          `rgba(${hexRGB(dark)},.5)`, `rgba(${hexRGB(dark)},.66)`, `rgba(${hexRGB(dark)},.85)`);
+  }, 1, 1);
+  const bumpMap = dataTex(512, (x,w,h) => {
+    x.fillStyle = "rgb(128,128,128)"; x.fillRect(0,0,w,h);
+    cells(x, w, h, "rgba(255,255,255,.55)", "rgba(255,255,255,0)",
+          "rgba(20,20,20,.55)", "rgba(10,10,10,.8)", "rgba(0,0,0,.9)");
+  });
+  return texCache[key+"Set"] = {map, bumpMap};
 }
 // 大片石紋拋光磚
 function stoneTileTex(base, vein, grout, key, tiles){
@@ -175,7 +326,11 @@ function stoneTileTex(base, vein, grout, key, tiles){
     for (let i=0;i<n;i++) for (let j=0;j<n;j++){
       x.save(); x.beginPath(); x.rect(i*s, j*s, s, s); x.clip();
       x.fillStyle = shade(base, rnd(-7,7)); x.fillRect(i*s, j*s, s, s);
-      for (let k=0;k<26;k++){
+      for (let k=0;k<9;k++){                       // 底層雲狀色域
+        x.fillStyle = `rgba(${hexRGB(vein)},${rnd(.03,.08)})`;
+        x.beginPath(); x.ellipse(i*s+rnd(0,s), j*s+rnd(0,s), rnd(s*.2,s*.6), rnd(s*.15,s*.5), rnd(0,3), 0, 7); x.fill();
+      }
+      for (let k=0;k<26;k++){                      // 主脈
         x.strokeStyle = `rgba(${hexRGB(vein)},${rnd(.04,.16)})`;
         x.lineWidth = rnd(.8,3.5); x.beginPath();
         let cx = i*s + rnd(0,s), cy = j*s + rnd(0,s);
@@ -183,44 +338,129 @@ function stoneTileTex(base, vein, grout, key, tiles){
         for (let p=0;p<4;p++){ cx += rnd(-s*.35,s*.35); cy += rnd(-s*.3,s*.3); x.lineTo(cx, cy); }
         x.stroke();
       }
+      for (let k=0;k<70;k++){                      // 細支脈與亮斑
+        x.strokeStyle = rnd(0,1) > .4 ? `rgba(${hexRGB(vein)},${rnd(.03,.09)})` : `rgba(255,252,245,${rnd(.03,.1)})`;
+        x.lineWidth = rnd(.4,1.2); x.beginPath();
+        let cx = i*s + rnd(0,s), cy = j*s + rnd(0,s);
+        x.moveTo(cx, cy);
+        for (let p=0;p<3;p++){ cx += rnd(-s*.1,s*.1); cy += rnd(-s*.09,s*.09); x.lineTo(cx, cy); }
+        x.stroke();
+      }
       x.restore();
     }
-    x.strokeStyle = grout; x.lineWidth = 4;
+    x.strokeStyle = grout; x.lineWidth = 3.2;     // 縫線：暗縫 + 磨邊亮線
     for (let i=0;i<=n;i++){ x.beginPath(); x.moveTo(i*s,0); x.lineTo(i*s,h); x.stroke(); x.beginPath(); x.moveTo(0,i*s); x.lineTo(w,i*s); x.stroke(); }
+    x.strokeStyle = "rgba(255,255,255,.12)"; x.lineWidth = 1;
+    for (let i=0;i<=n;i++){ x.beginPath(); x.moveTo(i*s+2.6,0); x.lineTo(i*s+2.6,h); x.stroke(); x.beginPath(); x.moveTo(0,i*s+2.6); x.lineTo(w,i*s+2.6); x.stroke(); }
   }, 3, 3);
 }
 // 方形磁磚（浴室）
 function bathTileTex(base, grout, key){
   return makeTex(key, 512, 512, (x,w,h) => {
-    x.fillStyle = base; x.fillRect(0,0,w,h);
+    x.fillStyle = grout; x.fillRect(0,0,w,h);
     const n = 4, s = w/n;
     for (let i=0;i<n;i++) for (let j=0;j<n;j++){
-      x.fillStyle = shade(base, rnd(-5,5)); x.fillRect(i*s+2, j*s+2, s-4, s-4);
-      for (let k=0;k<50;k++){ x.fillStyle = `rgba(0,0,0,${rnd(.01,.05)})`; x.fillRect(i*s+rnd(0,s), j*s+rnd(0,s), rnd(1,4), rnd(1,4)); }
+      const tone = rnd(-6,6);
+      x.fillStyle = shade(base, tone); x.fillRect(i*s+2.5, j*s+2.5, s-5, s-5);
+      x.save(); x.beginPath(); x.rect(i*s+2.5, j*s+2.5, s-5, s-5); x.clip();
+      for (let k=0;k<6;k++){                       // 石質雲紋
+        x.fillStyle = `rgba(${rnd(0,1)>.5?"250,247,240":"30,28,26"},${rnd(.02,.06)})`;
+        x.beginPath(); x.ellipse(i*s+rnd(0,s), j*s+rnd(0,s), rnd(s*.2,s*.55), rnd(s*.15,s*.45), rnd(0,3), 0, 7); x.fill();
+      }
+      for (let k=0;k<60;k++){ x.fillStyle = `rgba(0,0,0,${rnd(.01,.05)})`; x.fillRect(i*s+rnd(0,s), j*s+rnd(0,s), rnd(1,4), rnd(1,4)); }
+      x.restore();
+      x.strokeStyle = "rgba(255,255,255,.10)"; x.lineWidth = 1.4;   // 導角亮邊
+      x.strokeRect(i*s+3.2, j*s+3.2, s-6.4, s-6.4);
+      x.strokeStyle = "rgba(0,0,0,.18)"; x.lineWidth = 1.6;         // 縫線陰影
+      x.strokeRect(i*s+1.8, j*s+1.8, s-3.6, s-3.6);
     }
-    x.strokeStyle = grout; x.lineWidth = 4;
-    for (let i=0;i<=n;i++){ x.beginPath(); x.moveTo(i*s,0); x.lineTo(i*s,h); x.stroke(); x.beginPath(); x.moveTo(0,i*s); x.lineTo(w,i*s); x.stroke(); }
   }, 3, 3);
 }
-// 直紋木皮（櫃體、床頭板、房門）
+// 直紋木皮（櫃體、床頭板、房門）：早晚材交替 + 年輪 + 細導管
 function woodGrainTex(base, dark, key){
   return makeTex(key, 512, 512, (x,w,h) => {
     x.fillStyle = base; x.fillRect(0,0,w,h);
-    for (let i=0;i<150;i++){
+    let px = rnd(-24,0);
+    while (px < w){                                       // 早晚材色帶
+      const bw = rnd(9,32);
+      x.fillStyle = `rgba(${hexRGB(dark)},${rnd(.04,.12)})`;
+      x.beginPath(); x.moveTo(px,0);
+      x.bezierCurveTo(px+rnd(-7,7), h*.34, px+rnd(-7,7), h*.67, px+rnd(-5,5), h);
+      x.lineTo(px+bw+rnd(-4,4), h);
+      x.bezierCurveTo(px+bw+rnd(-7,7), h*.67, px+bw+rnd(-7,7), h*.34, px+bw, 0);
+      x.closePath(); x.fill();
+      px += bw + rnd(5,24);
+    }
+    for (let i=0;i<150;i++){                              // 年輪線
       x.strokeStyle = `rgba(${hexRGB(dark)},${rnd(.04,.16)})`;
       x.lineWidth = rnd(.5,2.4); x.beginPath();
-      const px = rnd(0,w); x.moveTo(px, 0);
-      x.bezierCurveTo(px+rnd(-8,8), h*.33, px+rnd(-8,8), h*.66, px+rnd(-6,6), h);
+      const lx = rnd(0,w); x.moveTo(lx, 0);
+      x.bezierCurveTo(lx+rnd(-8,8), h*.33, lx+rnd(-8,8), h*.66, lx+rnd(-6,6), h);
       x.stroke();
+    }
+    for (let i=0;i<900;i++){                              // 細導管
+      x.fillStyle = rnd(0,1) > .78 ? `rgba(255,250,240,${rnd(.03,.09)})` : `rgba(${hexRGB(dark)},${rnd(.05,.16)})`;
+      x.fillRect(rnd(0,w), rnd(0,h), rnd(.6,1.4), rnd(3,14));
     }
   }, 1, 1);
 }
-// 布紋
+// 布紋：平織經緯 + 紗線絨毛
 function fabricTex(base, key){
-  return makeTex(key, 256, 256, (x,w,h) => {
-    x.fillStyle = base; x.fillRect(0,0,w,h);
-    for (let i=0;i<4200;i++){ x.fillStyle = `rgba(${Math.random()>.5?"255,255,255":"0,0,0"},${rnd(.01,.06)})`; x.fillRect(rnd(0,w), rnd(0,h), rnd(1,3), rnd(1,3)); }
-  }, 3, 3);
+  return makeTex(key,512,512,(x,w,h)=>{
+    x.fillStyle=base;x.fillRect(0,0,w,h);
+    for(let i=0;i<w;i+=3){
+      x.fillStyle=`rgba(255,255,255,${rnd(.03,.075)})`;x.fillRect(i,0,1.4,h);
+      x.fillStyle=`rgba(40,32,25,${rnd(.03,.065)})`;x.fillRect(i+1.6,0,1.2,h);
+      x.fillStyle=`rgba(255,255,255,${rnd(.025,.06)})`;x.fillRect(0,i,w,1.4);
+      x.fillStyle=`rgba(40,32,25,${rnd(.025,.055)})`;x.fillRect(0,i+1.6,w,1.2);
+    }
+    for(let i=0;i<4200;i++){
+      x.fillStyle=rnd(0,1)>.5?`rgba(255,255,255,${rnd(.01,.04)})`:`rgba(60,50,40,${rnd(.01,.035)})`;
+      x.fillRect(rnd(0,w),rnd(0,h),1,rnd(1,3));
+    }
+  },1,1);
+}
+// 批土牆：低頻抹刀痕 + 細砂質顆粒，避免均勻塑膠感
+function plasterTex(){
+  return makeTex('plaster',512,512,(x,w,h)=>{
+    x.fillStyle='#ffffff';x.fillRect(0,0,w,h);
+    for(let i=0;i<90;i++){
+      const g=Math.round(rnd(246,254));
+      x.fillStyle=`rgba(${g},${g},${g-1},${rnd(.2,.45)})`;
+      x.beginPath();x.ellipse(rnd(0,w),rnd(0,h),rnd(40,155),rnd(28,120),rnd(0,3),0,7);x.fill();
+    }
+    for(let i=0;i<18000;i++){
+      const c=Math.floor(rnd(238,256));x.fillStyle=`rgb(${c},${c},${c})`;
+      x.fillRect(rnd(0,w),rnd(0,h),1,1);
+    }
+  },1,1);
+}
+// Height and roughness use linear data, never sRGB color interpretation.
+function surfaceDetail(material, scale, bumpScale){
+  if(!material.map)return;
+  material.map.repeat.set(1,1);
+  const source=material.map.image;
+  const c=document.createElement('canvas');c.width=c.height=256;
+  const ctx=c.getContext('2d');ctx.drawImage(source,0,0,256,256);
+  const pixels=ctx.getImageData(0,0,256,256);
+  for(let i=0;i<pixels.data.length;i+=4){
+    const value=Math.round(.2126*pixels.data[i]+.7152*pixels.data[i+1]+.0722*pixels.data[i+2]);
+    pixels.data[i]=pixels.data[i+1]=pixels.data[i+2]=value;
+  }
+  ctx.putImageData(pixels,0,0);
+  const bump=new THREE.CanvasTexture(c);bump.colorSpace=THREE.NoColorSpace;
+  bump.wrapS=bump.wrapT=THREE.RepeatWrapping;
+  material.bumpMap=bump;material.bumpScale=bumpScale;
+  const rc=document.createElement('canvas');rc.width=rc.height=256;
+  const rx=rc.getContext('2d');
+  for(let i=0;i<pixels.data.length;i+=4){
+    const v=Math.round(225+pixels.data[i]*.1);
+    pixels.data[i]=pixels.data[i+1]=pixels.data[i+2]=v;
+  }
+  rx.putImageData(pixels,0,0);
+  const rough=new THREE.CanvasTexture(rc);rough.colorSpace=THREE.NoColorSpace;
+  rough.wrapS=rough.wrapT=THREE.RepeatWrapping;material.roughnessMap=rough;
+  material.userData.surfaceScale=scale;
 }
 // 戶外陽台地磚
 function deckTex(base, key){
@@ -240,7 +480,7 @@ function stoneWallTex(base, key, cols, rows){
       x.save(); x.beginPath(); x.rect(i*cw, j*ch, cw, ch); x.clip();
       x.fillStyle = shade(base, rnd(-6,6)); x.fillRect(i*cw, j*ch, cw, ch);
       for (let k=0;k<70;k++){                       // 石材斑點
-        x.fillStyle = `rgba(${Math.random()>.5?"255,255,255":"40,36,32"},${rnd(.012,.045)})`;
+        x.fillStyle = `rgba(${rnd(0,1)>.5?"255,255,255":"40,36,32"},${rnd(.012,.045)})`;
         x.beginPath(); x.ellipse(i*cw+rnd(0,cw), j*ch+rnd(0,ch), rnd(3,14), rnd(3,11), rnd(0,3), 0, 7); x.fill();
       }
       for (let k=0;k<10;k++){                       // 淡紋理
@@ -435,49 +675,54 @@ gCeil.visible = false; gLabels.visible = false;
 const std = o => new THREE.MeshStandardMaterial(o);
 const phys = o => new THREE.MeshPhysicalMaterial(o);
 const M = {
-  wall:      std({color:0xf3efe7, roughness:.94, envMapIntensity:.55}),
-  wallWarm:  std({color:0xece4d6, roughness:.95, envMapIntensity:.5}),
+  wall:      std({map:plasterTex(),color:0xf3efe7, roughness:.94, envMapIntensity:.55}),
+  wallWarm:  std({map:plasterTex(),color:0xece4d6, roughness:.95, envMapIntensity:.5}),
   ceiling:   std({color:0xfcfaf6, roughness:1, side:THREE.DoubleSide, envMapIntensity:.4}),
   column:    std({color:0xe8e2d6, roughness:.93, envMapIntensity:.5}),
   columnHi:  std({color:0x6f665b, roughness:.8}),
 
   floorStone: phys({map: stoneTileTex("#4e4844", "#8a8078", "#6b635c", "stoneD", 2),
-                    color:0xffffff, roughness:.17, clearcoat:.85, clearcoatRoughness:.12, envMapIntensity:1.5}),
-  // 木地板：依 assets/reference/photos/IMG_4810 樣品屋，淺灰白橡木寬板
-  floorWood:  phys({map: woodFloorTex("#ddd7cc", "#a89c8c", "woodF", 7),
-                    color:0xffffff, roughness:.42, clearcoat:.35, clearcoatRoughness:.3, envMapIntensity:.9}),
+                    color:0xffffff, roughness:.24, clearcoat:.5, clearcoatRoughness:.2, envMapIntensity:1.15}),
+  // 木地板：依 assets/reference/photos/IMG_4810 樣品屋，淺灰白橡木寬板；板寬 19 cm、錯縫拼接
+  floorWood:  phys({...woodFloorMaps("#ddd7cc", "#a89c8c"),
+                    color:0xffffff, roughness:.62, bumpScale:.07,
+                    clearcoat:.18, clearcoatRoughness:.4, envMapIntensity:.8}),
   // 浴室地磚：依 assets/reference/photos/IMG_4782~4786，深灰
   floorBath:  phys({map: bathTileTex("#403d3a", "#55524e", "bathT"),
-                    color:0xffffff, roughness:.26, clearcoat:.5, clearcoatRoughness:.2, envMapIntensity:1}),
+                    color:0xffffff, roughness:.32, clearcoat:.35, clearcoatRoughness:.26, envMapIntensity:.9}),
   // 浴室牆磚：暖灰大片石紋
   bathWall:   phys({map: stoneWallTex("#9d968d", "bathW", 2, 3),
-                    color:0xffffff, roughness:.34, clearcoat:.35, clearcoatRoughness:.25, envMapIntensity:1}),
+                    color:0xffffff, roughness:.4, clearcoat:.22, clearcoatRoughness:.32, envMapIntensity:.85}),
   floorDeck:  std({map: deckTex("#8e8b86", "deckT"), roughness:.9, envMapIntensity:.45}),
   base:       std({color:0xbdb5aa, roughness:.9}),
 
-  woodLight:  std({map: woodGrainTex("#d6bc95", "#8a6a42", "wdL"), roughness:.62, envMapIntensity:.7}),
+  woodLight:  std({map: woodGrainTex("#d9c9af", "#a39176", "wdL"), roughness:.62, envMapIntensity:.7}),
   woodMid:    std({map: woodGrainTex("#c09a68", "#7a5530", "wdM"), roughness:.58, envMapIntensity:.7}),
-  woodDoor:   std({map: woodGrainTex("#b98b57", "#6e4a28", "wdD"), roughness:.55, envMapIntensity:.75}),
-  woodOak:    std({map: woodGrainTex("#c99a5e", "#8a5f30", "wdO"), roughness:.5, envMapIntensity:.8}),
+  woodDoor:   std({map: woodGrainTex("#c9b394", "#927658", "wdD"), roughness:.55, envMapIntensity:.75}),
+  woodOak:    std({map: woodGrainTex("#cdb896", "#947d5e", "wdO"), roughness:.5, envMapIntensity:.8}),
 
-  lacquerW:  phys({color:0xf6f4f0, roughness:.14, clearcoat:.9, clearcoatRoughness:.08, envMapIntensity:1.5}),
+  lacquerW:  phys({color:0xf6f4f0, roughness:.32, clearcoat:.35, clearcoatRoughness:.25, envMapIntensity:.9}),
   // 廚房：依 assets/reference/photos/IMG_4790,4800,4801,4803
   // 下櫃：淺灰橡木；上櫃：深胡桃（依樣品屋實拍）
   kitchLower: std({map: woodGrainTex("#c0b29c", "#8e8070", "kLow"), roughness:.55, envMapIntensity:.7}),
   kitchUpper: std({map: woodGrainTex("#7e6349", "#4a3524", "kUp"), roughness:.5, envMapIntensity:.8}),
-  kitchInner: phys({color:0xf4f1ea, roughness:.14, clearcoat:.9, clearcoatRoughness:.08, envMapIntensity:1.4}),
-  kitchTop:   phys({color:0xf2ecdf, roughness:.18, clearcoat:.8, clearcoatRoughness:.12, envMapIntensity:1.4}),
-  splash:     phys({color:0xdcE8de, roughness:.06, clearcoat:1, clearcoatRoughness:.03, envMapIntensity:2, metalness:.05}),
+  kitchInner: phys({color:0xf4f1ea, roughness:.18, clearcoat:.7, clearcoatRoughness:.12, envMapIntensity:1.1}),
+  kitchTop:   phys({color:0xf2ecdf, roughness:.24, clearcoat:.6, clearcoatRoughness:.18, envMapIntensity:1.05}),
+  splash:     phys({color:0xdcE8de, roughness:.08, clearcoat:.85, clearcoatRoughness:.06, envMapIntensity:1.4, metalness:.05}),
   // 浴櫃：淺橡木（IMG_4782）
   bathCab:    std({map: woodGrainTex("#c9b193", "#8d7454", "bCab"), roughness:.5, envMapIntensity:.8}),
-  mirror:     phys({color:0xe8eef2, roughness:.03, metalness:.95, envMapIntensity:2.4}),
-  counter:   phys({color:0xe9e5df, roughness:.2, clearcoat:.7, envMapIntensity:1.3}),
-  steel:     std({color:0xc8ccd0, roughness:.25, metalness:.85, envMapIntensity:1.6}),
+  mirror:     phys({color:0xe8eef2, roughness:.05, metalness:.92, envMapIntensity:1.7}),
+  counter:   phys({color:0xe9e5df, roughness:.26, clearcoat:.55, clearcoatRoughness:.16, envMapIntensity:1.05}),
+  steel:     std({color:0xc8ccd0, roughness:.3, metalness:.82, envMapIntensity:1.25}),
+  chrome:    std({color:0xd9dde1, roughness:.16, metalness:.95, envMapIntensity:1.45}),   // 沙發鍍鉻腳
   black:     phys({map: woodGrainTex("#2e2a27", "#000000", "drkD"), color:0xffffff,
                    roughness:.34, clearcoat:.55, clearcoatRoughness:.2, envMapIntensity:1.2}),
-  screen:    std({color:0x14161a, roughness:.12, metalness:.4, envMapIntensity:1.4}),
+  screen:    std({color:0x14161a, roughness:.12, metalness:.4, envMapIntensity:1.15}),
+  tvFrame:   std({color:0x1b1d21, roughness:.5, metalness:.3, envMapIntensity:.8}),         // 電視邊框與機身
 
-  sofa:      std({map: fabricTex("#d4c8b2", "fabS"), roughness:.93, envMapIntensity:.35}),   // 米色布
+  // 沙發：IKEA LANDSKRONA，Grann/Bomstad 金棕皮革
+  leather:   phys({map: leatherTex("#bd7c44", "#7d4a20", "leathA"), color:0xffffff,
+                   roughness:.5, clearcoat:.15, clearcoatRoughness:.4, envMapIntensity:.9}),
   cushion:   std({map: fabricTex("#b8a88e", "fabC"), roughness:.95, envMapIntensity:.32}),
   quilt:     std({map: fabricTex("#f0ece4", "fabQ"), roughness:.95, envMapIntensity:.35}),
   quiltGray: std({map: fabricTex("#7c7772", "fabG"), roughness:.95, envMapIntensity:.35}),
@@ -497,6 +742,7 @@ const M = {
   plantLeaf: std({color:0x5f8a4a, roughness:.8, envMapIntensity:.5}),
   plantPot:  std({color:0xb0a99e, roughness:.85}),
   lampWhite: std({color:0xfffaf0, roughness:.35}),
+  lampTrim:  std({color:0xf4f1ec, roughness:.45, metalness:.08, side:THREE.DoubleSide, envMapIntensity:.8}),  // 嵌燈裝飾環
   accent:    std({color:0xb8b2a8, roughness:.7}),
   slatBack:  std({color:0x6b655d, roughness:.92, envMapIntensity:.4}),      // 格柵背板（暖深灰）
   ledStrip:  std({color:0xfff1d6, emissive:0xffd9a0, emissiveIntensity:2.2, roughness:.4}),
@@ -505,14 +751,43 @@ const M = {
   acBracket: std({color:0x585c60, roughness:.5, metalness:.6, envMapIntensity:1.1}),
   blind:     std({color:0xe8dcc4, roughness:.85, transparent:true, opacity:.94, side:THREE.DoubleSide, envMapIntensity:.4}),
 };
+// All scales are centimeters; shared textures keep mobile memory bounded.
+for(const mat of [M.wall,M.wallWarm]) surfaceDetail(mat,100,.025);
+for(const mat of [M.woodLight,M.woodMid,M.woodDoor,M.woodOak,M.kitchLower,M.kitchUpper,M.bathCab]) surfaceDetail(mat,100,.08);
+for(const mat of [M.cushion,M.quilt,M.quiltGray,M.pillow]) surfaceDetail(mat,35,.06);
+surfaceDetail(M.rug,45,.18);
+// 木地板自備凹凸與粗糙度圖；此處只登記世界座標貼圖尺寸（板寬 19 cm）。
+M.floorWood.userData.surfaceScale = FLOOR_TILE;
+M.leather.bumpMap = bumpFrom(M.leather.map, 256); M.leather.bumpScale = .05;
+surfaceDetail(M.floorBath,120,.06);
+surfaceDetail(M.bathWall,120,.04);
+surfaceDetail(M.floorDeck,120,.09);
+const maxAnisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
+for(const mat of Object.values(M)) for(const key of ['map','bumpMap','roughnessMap'])
+  if(mat[key]) mat[key].anisotropy=maxAnisotropy;
+
 const wallMats = [M.wall, M.wallWarm, M.column];
 
 /* ---------------- 幾何工具 ---------------- */
+// Project UVs in plan/world units. Adjacent floor rectangles share their origin.
+function surfaceUV(mesh, scale){
+  if(!scale)return;
+  const g=mesh.geometry,p=g.attributes.position,n=g.attributes.normal,uv=g.attributes.uv;
+  for(let i=0;i<p.count;i++){
+    const x=p.getX(i)+mesh.position.x,y=p.getY(i)+mesh.position.y,z=p.getZ(i)+mesh.position.z;
+    const nx=Math.abs(n.getX(i)),ny=Math.abs(n.getY(i)),nz=Math.abs(n.getZ(i));
+    const u=ny>=nx&&ny>=nz ? x : nx>=nz ? z : x;
+    const v=ny>=nx&&ny>=nz ? -z : y;
+    uv.setXY(i,u/scale,v/scale);
+  }
+  uv.needsUpdate=true;
+}
 function box(parent, x0,y0,x1,y1, z0, h, mat, shadow=true){
   const w = Math.abs(x1-x0), d = Math.abs(y1-y0);
   if (w < .01 || d < .01 || h < .01) return null;
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.position.set((x0+x1)/2, z0 + h/2, (y0+y1)/2);
+  surfaceUV(m,mat.userData.surfaceScale);
   m.castShadow = shadow; m.receiveShadow = true; parent.add(m); return m;
 }
 function rbox(parent, x0,y0,x1,y1, z0, h, mat, r=4){
@@ -522,6 +797,7 @@ function rbox(parent, x0,y0,x1,y1, z0, h, mat, r=4){
   const g = rr > .5 ? new RoundedBoxGeometry(w, h, d, 3, rr) : new THREE.BoxGeometry(w, h, d);
   const m = new THREE.Mesh(g, mat);
   m.position.set((x0+x1)/2, z0 + h/2, (y0+y1)/2);
+  surfaceUV(m,mat.userData.surfaceScale);
   m.castShadow = true; m.receiveShadow = true; parent.add(m); return m;
 }
 function cyl(parent, cx, cz, r, z0, h, mat, seg=20){
@@ -601,7 +877,9 @@ for (const w of walls){
 // 門楣
 for (const d of P.doors){
   if (/淋浴/.test(d.name)) continue;
-  const [hx,hy]=d.hinge, [ax,ay]=d.arc_from;
+  // 平移門無鉸鏈；洞口由關閉位的兩角推導，其餘門楣邏輯照舊。
+  const [hx,hy] = d.kind === 'slide' ? d.closed[0] : d.hinge;
+  const [ax,ay] = d.kind === 'slide' ? [d.closed[0][0], d.closed[1][1]] : d.arc_from;
   const horizOpening = Math.abs(hy-ay) < 0.5;
   const lo = Math.min(hx,ax), hi = Math.max(hx,ax), loy = Math.min(hy,ay), hiy = Math.max(hy,ay);
   if (horizOpening){
@@ -677,6 +955,15 @@ for (const [x0,y0,x1,y1] of bathTiles) push(box(gWalls, x0,y0,x1,y1, 0, H, M.bat
 
 /* ---------------- 門片 ---------------- */
 for (const d of P.doors){
+  if (d.kind === 'slide'){
+    // 內推巴士平移門：門片畫在停靠位（開啟狀態），不擋門洞與站位。
+    const slider = new THREE.Group(); gDoors.add(slider); wallMeshes.push(slider);
+    const [px0,py0] = d.parked[0], [px1,py1] = d.parked[1];
+    box(slider, px0, py0, px1, py1, 0, DOOR_H, M.woodDoor);
+    box(slider, px0, d.closed[0][1], px1, py1, DOOR_H + 2, 4, M.black, false);   // 吊軌
+    box(slider, px0-.6, py0+10, px1+.6, py0+30, 92, 18, M.screen, false);        // 內嵌拉手
+    continue;
+  }
   const [hx,hy]=d.hinge, [lx,ly]=d.leaf_to;
   const len = Math.hypot(lx-hx, ly-hy);
   const mat = d.id === "O07" ? M.black : M.woodDoor;
@@ -735,35 +1022,51 @@ function makeCloset(f, h=220){
     else       box(gFurn, f.x0-0.6, f.y0+t-0.6, f.x1+0.6, f.y0+t+0.6, 4, h-8, M.accent, false);
   }
 }
-// 沙發：座 + 背 + 扶手 + 靠枕
+// 沙發：IKEA LANDSKRONA 三人座（Grann/Bomstad 金棕皮革）
+// 座高 44、扶手頂 60、背墊頂 78、鍍鉻短圓腳 15；背墊 3×5、座墊 2×5 格狀拉扣。
+const matCache = {};
+function leatherTuft(cols, rows){
+  const key = `tuftMat${cols}x${rows}`;
+  if (!matCache[key]){
+    const maps = tuftMaps(cols, rows, "#bd7c44", "#7d4a20");
+    matCache[key] = new THREE.MeshPhysicalMaterial({map:maps.map, bumpMap:maps.bumpMap, bumpScale:.5,
+      color:0xffffff, roughness:.5, clearcoat:.15, clearcoatRoughness:.4, envMapIntensity:.9});
+  }
+  return matCache[key];
+}
 function makeSofa(f, backSide, arms){
-  const w = f.x1-f.x0, d = f.y1-f.y0, horiz = w > d;
-  rbox(gFurn, f.x0, f.y0, f.x1, f.y1, 8, 34, M.sofa, 5);             // 座
-  rbox(gFurn, f.x0+4, f.y0+4, f.x1-4, f.y1-4, 42, 14, M.sofa, 6);    // 坐墊
-  legs(f, 8, M.steel, 6, 2);
-  const bt = 18;
-  if (backSide === "N")      rbox(gFurn, f.x0, f.y0, f.x1, f.y0+bt, 8, 68, M.sofa, 5);
-  else if (backSide === "S") rbox(gFurn, f.x0, f.y1-bt, f.x1, f.y1, 8, 68, M.sofa, 5);
-  else if (backSide === "W") rbox(gFurn, f.x0, f.y0, f.x0+bt, f.y1, 8, 68, M.sofa, 5);
-  else if (backSide === "E") rbox(gFurn, f.x1-bt, f.y0, f.x1, f.y1, 8, 68, M.sofa, 5);
-  // 扶手（一字沙發兩端）
-  if (arms){
-    const at = 17;
-    if (backSide === "E" || backSide === "W"){
-      rbox(gFurn, f.x0, f.y0, f.x1, f.y0+at, 8, 56, M.sofa, 5);
-      rbox(gFurn, f.x0, f.y1-at, f.x1, f.y1, 8, 56, M.sofa, 5);
-    } else {
-      rbox(gFurn, f.x0, f.y0, f.x0+at, f.y1, 8, 56, M.sofa, 5);
-      rbox(gFurn, f.x1-at, f.y0, f.x1, f.y1, 8, 56, M.sofa, 5);
-    }
+  const alongX = backSide === "N" || backSide === "S";          // 長邊沿 x？
+  const L0 = alongX ? f.x0 : f.y0, L1 = alongX ? f.x1 : f.y1;   // 長邊範圍
+  const D  = alongX ? f.y1-f.y0 : f.x1-f.x0;                    // 沙發深度
+  const B  = backSide === "E" ? f.x1 : backSide === "W" ? f.x0 : backSide === "N" ? f.y0 : f.y1;
+  const dir = (backSide === "W" || backSide === "N") ? 1 : -1;  // 由背面指向正面
+  // u 沿長邊，v 為距背面的深度
+  const R = (u0,u1,v0,v1) => {
+    const a = B + dir*v0, b = B + dir*v1;
+    return alongX ? [Math.min(u0,u1), Math.min(a,b), Math.max(u0,u1), Math.max(a,b)]
+                  : [Math.min(a,b), Math.min(u0,u1), Math.max(a,b), Math.max(u0,u1)];
+  };
+  const LIFT = 15, PLINTH = 17, SEAT_TOP = 44, ARM_TOP = 60, BACK_TOP = 78, ARM = 21, BACK_T = 16, CUSH_T = 16;
+  // 鍍鉻短圓腳，座體離地
+  for (const u of [L0+11, L1-11]) for (const v of [9, D-9]){
+    const [x0,z0,x1,z1] = R(u,u,v,v);
+    cyl(gFurn, (x0+x1)/2, (z0+z1)/2, 2.6, 0, LIFT, M.chrome, 14);
   }
-  // 靠枕
-  const n = Math.max(1, Math.floor((horiz?w:d)/75));
-  for (let i=0;i<n;i++){
-    const t = (horiz?w:d)*(i+0.5)/n, cm = i%2 ? M.cushion : M.pillow;
-    if (horiz) rbox(gFurn, f.x0+t-19, backSide==="N"?f.y0+bt:f.y1-bt-11, f.x0+t+19, backSide==="N"?f.y0+bt+11:f.y1-bt, 54, 34, cm, 7);
-    else       rbox(gFurn, backSide==="W"?f.x0+bt:f.x1-bt-11, f.y0+t-19, backSide==="W"?f.x0+bt+11:f.x1-bt, f.y0+t+19, 54, 34, cm, 7);
+  rbox(gFurn, ...R(L0,L1,0,D), LIFT, PLINTH, M.leather, 2);                  // 座箱
+  rbox(gFurn, ...R(L0,L1,0,BACK_T), LIFT, BACK_TOP-LIFT, M.leather, 3);      // 背板
+  if (arms) for (const [u0,u1] of [[L0, L0+ARM], [L1-ARM, L1]])              // 方正扶手，厚 21
+    rbox(gFurn, ...R(u0,u1,0,D), LIFT, ARM_TOP-LIFT, M.leather, 3);
+  const iu0 = arms ? L0+ARM : L0, iu1 = arms ? L1-ARM : L1, mid = (iu0+iu1)/2;
+  // 拉扣格數隨方位換算：貼圖 u 對應 BoxGeometry 各面的第一軸
+  const seatMat = leatherTuft(alongX ? 5 : 2, alongX ? 2 : 5);
+  const backMat = leatherTuft(5, 3);
+  for (const [u0,u1] of [[iu0, mid-.8], [mid+.8, iu1]]){
+    rbox(gFurn, ...R(u0,u1, BACK_T, BACK_T+CUSH_T), SEAT_TOP, BACK_TOP-SEAT_TOP, backMat, 2.5);  // 背墊
+    rbox(gFurn, ...R(u0,u1, BACK_T+CUSH_T, D-3), LIFT+PLINTH, SEAT_TOP-LIFT-PLINTH, seatMat, 2.5); // 座墊
   }
+  // 抱枕（兩顆，靠背墊）
+  for (const u of [iu0+36, iu1-36])
+    rbox(gFurn, ...R(u-19, u+19, BACK_T+CUSH_T, BACK_T+CUSH_T+11), SEAT_TOP, 32, M.cushion, 6);
 }
 // 餐椅：座 + 背 + 四腳
 function makeChair(f){
@@ -851,7 +1154,7 @@ for (const id of ['closet_A','closet_B','closet_C']){
   if(F[id]){makeCloset(F[id]);mark(id);}
 }
 // Open steel shelving: five shelf levels, four corner posts; heights are proposals.
-for(const id of ['storage_rack_N','storage_rack_S']){
+for(const id of ['storage_rack']){
   const f=F[id];
   for(const x of [f.x0,f.x1-3]) for(const z of [f.y0,f.y1-3])
     box(gFurn,x,z,x+3,z+3,0,200,M.steel);
@@ -902,7 +1205,11 @@ if (F.tv_cab){ // 電視牆：櫃體 + 電視
   slab(f, 0, 27, M.woodLight);
   slab(f,27,3,M.counter);
   for(let y=f.y0+56;y<f.y1;y+=56) box(gFurn,f.x1-0.6,y-0.4,f.x1,y+0.4,3,23,M.accent,false);
-  box(gFurn, f.x0+2, cz(f)-70, f.x0+6, cz(f)+70, 95, 82, M.screen);
+  // 65 吋：螢幕 145×83，中心離地 110；機身 4 cm + 1 cm 邊框 + 面板
+  const tvZ = cz(f), TV_W = 145, TV_H = 83, TV_Y = 110 - TV_H/2;
+  box(gFurn, f.x0+2, tvZ-TV_W/2, f.x0+6, tvZ+TV_W/2, TV_Y, TV_H, M.tvFrame);
+  box(gFurn, f.x0+6, tvZ-TV_W/2, f.x0+7, tvZ+TV_W/2, TV_Y, TV_H, M.tvFrame, false);
+  box(gFurn, f.x0+7, tvZ-TV_W/2+1, f.x0+7.6, tvZ+TV_W/2-1, TV_Y+1, TV_H-2, M.screen, false);
   mark("tv_cab");
 }
 if (F.sofa_main){ makeSofa(F.sofa_main, "E", true); mark("sofa_main"); }   // 一字沙發，客廳不放茶几
@@ -1074,16 +1381,30 @@ const circuits=new Map(), fixtureTargets=[];
 for(const spec of DESIGN.circuits){
   const circuit={...spec,on:true,lights:[],materials:[]};circuits.set(spec.id,circuit);
   if(spec.kind==='track'){
-    const zs=spec.points.map(p=>p[1]);
-    const track=box(fixtures,spec.points[0][0]-2,Math.min(...zs)-15,spec.points[0][0]+2,Math.max(...zs)+15,H-3,3,M.black);
+    // 軌道長軸取燈具分布較長的方向，沿 x 或沿 z 皆可。
+    const xs=spec.points.map(p=>p[0]),zs=spec.points.map(p=>p[1]);
+    const tx0=Math.min(...xs),tx1=Math.max(...xs),tz0=Math.min(...zs),tz1=Math.max(...zs);
+    const track=tx1-tx0>=tz1-tz0
+      ? box(fixtures,tx0-15,(tz0+tz1)/2-2,tx1+15,(tz0+tz1)/2+2,H-3,3,M.black)
+      : box(fixtures,(tx0+tx1)/2-2,tz0-15,(tx0+tx1)/2+2,tz1+15,H-3,3,M.black);
     track.userData.circuit=spec.id;
   }
   for(const [x,z] of spec.points){
-    const mount=spec.kind==='wall'?205:spec.kind==='pendant'?190:H-6;
+    const mount=spec.kind==='wall'?205:spec.kind==='pendant'?190:spec.kind==='recessed'?H-.9:H-6;
     const housing=new THREE.Group();housing.position.set(x,mount,z);fixtures.add(housing);
-    const shell=new THREE.Mesh(new THREE.CylinderGeometry(7,7,8,16),M.lampWhite);housing.add(shell);
     const material=new THREE.MeshStandardMaterial({color:0xfff2db,emissive:spec.color,emissiveIntensity:2,roughness:.4});
-    const lens=new THREE.Mesh(new THREE.CylinderGeometry(5.8,5.8,1,16),material);lens.position.y=-4.5;housing.add(lens);
+    if(spec.kind==='recessed'){
+      // 嵌燈：Ø9 薄裝飾環與天花齊平，發光面內凹，不突出天花。
+      const flange=new THREE.Mesh(new THREE.RingGeometry(3.5,4.5,24),M.lampTrim);
+      flange.rotation.x=Math.PI/2;housing.add(flange);
+      const cup=new THREE.Mesh(new THREE.CylinderGeometry(3.5,3.5,.9,24,1,true),M.lampTrim);
+      cup.position.y=.45;housing.add(cup);
+      const lens=new THREE.Mesh(new THREE.CylinderGeometry(3.3,3.3,.5,24),material);
+      lens.position.y=.5;housing.add(lens);
+    }else{
+      const shell=new THREE.Mesh(new THREE.CylinderGeometry(7,7,8,16),M.lampWhite);housing.add(shell);
+      const lens=new THREE.Mesh(new THREE.CylinderGeometry(5.8,5.8,1,16),material);lens.position.y=-4.5;housing.add(lens);
+    }
     circuit.materials.push(material);
     housing.traverse(m=>{if(m.isMesh){m.userData.circuit=spec.id;fixtureTargets.push(m);}});
     if(spec.kind==='pendant') box(fixtures,x-.5,z-.5,x+.5,z+.5,mount+4,H-mount-4,M.black,false);

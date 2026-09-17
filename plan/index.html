@@ -172,11 +172,21 @@
 
   // 門
   for (const d of P.doors){
-    const [hx,hy]=d.hinge, [lx,ly]=d.leaf_to, [ax,ay]=d.arc_from;
-    const r = Math.hypot(lx-hx, ly-hy);
-    line(L.doors, hx,hy,lx,ly,"#333",2.2);
-    const cross=(ax-hx)*(ly-hy)-(ay-hy)*(lx-hx); const sweep = cross>0?1:0;
-    el("path", {d:`M ${ax} ${ay} A ${r} ${r} 0 0 ${sweep} ${lx} ${ly}`, fill:"none", stroke:"#333", "stroke-width":1, "stroke-dasharray":"4 3"}, L.doors);
+    let hx,hy,ax,ay;
+    if (d.kind === "slide"){
+      // 內推巴士平移門：關閉齊平於牆線、停靠位在室內側、吊軌虛線，無迴轉弧
+      const [[cx0,cy0],[cx1,cy1]]=d.closed, [[px0,py0],[px1,py1]]=d.parked, [[tx0,ty0],[tx1,ty1]]=d.track;
+      rect(L.doors,cx0,cy0,cx1,cy1,"#fbf3d6","#333",1.4);
+      el("rect", {x:px0, y:py0, width:px1-px0, height:py1-py0, fill:"none", stroke:"#333", "stroke-width":1, "stroke-dasharray":"4 3"}, L.doors);
+      line(L.doors, tx0,ty0,tx1,ty1,"#333",0.8,"2 2");
+      [hx,hy]=[cx0,cy0]; [ax,ay]=[cx0,cy1];
+    } else {
+      const [lx,ly]=d.leaf_to; [hx,hy]=d.hinge; [ax,ay]=d.arc_from;
+      const r = Math.hypot(lx-hx, ly-hy);
+      line(L.doors, hx,hy,lx,ly,"#333",2.2);
+      const cross=(ax-hx)*(ly-hy)-(ay-hy)*(lx-hx); const sweep = cross>0?1:0;
+      el("path", {d:`M ${ax} ${ay} A ${r} ${r} 0 0 ${sweep} ${lx} ${ly}`, fill:"none", stroke:"#333", "stroke-width":1, "stroke-dasharray":"4 3"}, L.doors);
+    }
     const mx=(hx+ax)/2, my=(hy+ay)/2;
     text(L.doorlab, mx, my+(hy===ay?14:0), `${d.id} 約${d.width}`, 9, "var(--brown)", {rot: hx===ax?-90:null});
   }
