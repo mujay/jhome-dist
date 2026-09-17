@@ -9,8 +9,8 @@
   html,body{margin:0;height:100%;overflow:hidden;font-family:"PingFang TC","Noto Sans TC","Helvetica Neue",Arial,sans-serif;background:#2a2724;color:#2b2724}
   #c{width:100%;height:100%;display:block}
   #ui,#lightingPanel{position:absolute;top:12px;background:rgba(252,250,247,.94);backdrop-filter:blur(8px);padding:12px 14px;border-radius:10px;font-size:12px;box-shadow:0 4px 18px rgba(0,0,0,.28);max-width:290px;max-height:calc(100dvh - 70px);overflow:auto}
-  #ui{left:12px}
-  #lightingPanel{right:12px;width:220px}
+  #ui{left:64px}
+  #lightingPanel{right:64px;width:220px}
   #lightingPanel h2{font-size:15px;margin:0 0 8px}
   #lightingPanel summary{cursor:pointer;margin:9px 0 5px}
   #ui h1{font-size:15px;margin:0 0 3px;letter-spacing:.3px}
@@ -26,11 +26,19 @@
   #destinations button[aria-pressed="true"],#lightingPanel button[aria-pressed="true"]{background:#4a443d;color:#fff}
   #lightingPanel .circuit{display:block;width:100%;text-align:left}
   #lightingPanel small{display:block;font-size:10px;opacity:.75}
-  @media(max-width:600px){
-    #ui{left:8px;max-width:calc(54vw - 12px);padding:10px}
-    #lightingPanel{right:8px;width:calc(46vw - 12px);padding:10px}
+  #ui[hidden],#lightingPanel[hidden]{display:none!important}
+  #ui,#lightingPanel{z-index:20;overscroll-behavior:contain}
+  .panel-toggle{position:absolute;top:12px;z-index:21;width:44px;min-height:100px;padding:10px 8px;border:1px solid #d8d0c4;border-radius:0 9px 9px 0;background:rgba(252,250,247,.96);color:#4a443d;box-shadow:0 2px 10px #0003;font:inherit;font-size:14px;writing-mode:vertical-rl;letter-spacing:2px;cursor:pointer;touch-action:manipulation}
+  .panel-toggle[aria-expanded="true"]{background:#4a443d;color:white}
+  .panel-toggle:focus-visible{outline:3px solid #a8865a;outline-offset:2px}
+  #viewPanelToggle{left:0}
+  #lightPanelToggle{right:0;border-radius:9px 0 0 9px}
+  @media(max-width:760px), (max-height:500px), (pointer:coarse) and (max-width:1024px){
+    #ui{left:52px;width:290px;max-width:calc(100vw - 104px);padding:10px}
+    #lightingPanel{right:52px;width:260px;max-width:calc(100vw - 104px);padding:10px}
     #ui input[type=range]{min-width:0;width:60px}
     #ui .row{flex-wrap:wrap}
+    #ui button,#lightingPanel button{min-height:40px}
   }
   #walkPad[hidden]{display:none}
   #walkPad{padding-top:6px}
@@ -44,7 +52,9 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="ui">
+<button id="viewPanelToggle" class="panel-toggle" aria-controls="ui" aria-expanded="true" aria-label="收合視角設定">視角設定</button>
+<button id="lightPanelToggle" class="panel-toggle" aria-controls="lightingPanel" aria-expanded="true" aria-label="收合燈光設定">燈光設定</button>
+<div id="ui" role="region" aria-label="視角設定">
   <h1>C2 室內 3D 模型</h1>
   <div class="sub">依 assets/reference/renders/ 擬真圖與 assets/reference/photos/ 樣品屋實拍。日照為真實太陽位置模擬（25.1919°N, 121.4327°E，8F，UTC+8）。座向依原始配置圖指北針，圖面上方為正北。天花 280、門 210、窗台 90／窗頂 210、落地窗 0–225、梁 45×50 為假設值，無實測。</div>
   <div>
@@ -85,6 +95,7 @@
 </aside>
 <div id="hint">左鍵旋轉、右鍵平移、滾輪縮放。</div>
 <div id="err" role="status" style="display:block">正在載入 3D 模型…</div>
+<script src="panel_controls.js"></script>
 <script>
 window.jhomeReady = false;
 const showLoadError = () => {
@@ -96,7 +107,7 @@ window.addEventListener('error',showLoadError);
 window.addEventListener('unhandledrejection',showLoadError);
 setTimeout(()=>{if(!window.jhomeReady) showLoadError();},15000);
 </script>
-<script src="../generated/plan_data.js"></script>
+<script src="../generated/plan_2d.js"></script>
 <script src="scene_design.js"></script>
 <script type="importmap">
 {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
@@ -689,36 +700,28 @@ function legs(f, h, mat, inset=4, t=3){
     box(gFurn, x-t, y-t, x+t, y+t, 0, h, mat);
 }
 // 床：床墊 + 被子 + 枕頭
-function makeBed(f, headId, quiltMat){
-  const w = f.x1-f.x0, d = f.y1-f.y0, horiz = w > d;
-  box(gFurn, f.x0, f.y0, f.x1, f.y1, 0, 22, M.lacquerW);            // 床架
-  rbox(gFurn, f.x0+2, f.y0+2, f.x1-2, f.y1-2, 22, 26, M.pillow, 4);  // 床墊
-  const hd = F[headId];
-  // 被子覆蓋約 70%，從遠離床頭那端算起
-  let q;
-  if (hd){
-    const headAtMaxX = hd.x0 >= f.x1-1, headAtMinX = hd.x1 <= f.x0+1;
-    const headAtMaxY = hd.y0 >= f.y1-1, headAtMinY = hd.y1 <= f.y0+1;
-    if (headAtMaxX)      q = [f.x0+1, f.y0+3, f.x1-w*0.28, f.y1-3];
-    else if (headAtMinX) q = [f.x0+w*0.28, f.y0+3, f.x1-1, f.y1-3];
-    else if (headAtMaxY) q = [f.x0+3, f.y0+1, f.x1-3, f.y1-d*0.26];
-    else                 q = [f.x0+3, f.y0+d*0.26, f.x1-3, f.y1-1];
-  } else q = [f.x0+3, f.y0+3, f.x1-3, f.y1-3];
-  rbox(gFurn, q[0], q[1], q[2], q[3], 46, 14, quiltMat || M.quilt, 6);
-  // 枕頭 2 顆，靠床頭
-  if (hd){
-    const along = (hd.x1-hd.x0) > (hd.y1-hd.y0);
-    const pc = along ? cx(hd) : cz(hd);
-    const o = along ? Math.min(45, (f.x1-f.x0)/4) : Math.min(45, (f.y1-f.y0)/4);
-    for (const s of [-1, 1]){
-      if (along){
-        const px = pc + s*o;
-        rbox(gFurn, px-32, cz(hd) + (hd.y0 > cz(f) ? -46 : 4), px+32, cz(hd) + (hd.y0 > cz(f) ? -4 : 46), 48, 16, M.pillow, 4);
-      } else {
-        const pz = pc + s*o;
-        rbox(gFurn, cx(hd) + (hd.x0 > cx(f) ? -46 : 4), pz-32, cx(hd) + (hd.x0 > cx(f) ? -4 : 46), pz+32, 48, 16, M.pillow, 4);
-      }
-    }
+function makeBed(f, side, mattressWidth, mattressLength, quiltMat){
+  slab(f, 0, 22, M.lacquerW);
+  const eastWest = side === 'E' || side === 'W';
+  const mx = cx(f), mz = cz(f);
+  const mw = eastWest ? mattressLength : mattressWidth;
+  const md = eastWest ? mattressWidth : mattressLength;
+  const x0=mx-mw/2, x1=mx+mw/2, z0=mz-md/2, z1=mz+md/2;
+  rbox(gFurn,x0,z0,x1,z1,22,26,M.pillow,3);
+  const head = side==='E' ? [f.x1-3,f.y0,f.x1,f.y1]
+    : side==='W' ? [f.x0,f.y0,f.x0+3,f.y1]
+    : [f.x0,f.y1-3,f.x1,f.y1];
+  box(gFurn,...head,0,95,M.woodLight);
+  const q = side==='E' ? [x0,z0+2,x1-50,z1-2]
+    : side==='W' ? [x0+50,z0+2,x1,z1-2]
+    : [x0+2,z0,x1-2,z1-50];
+  rbox(gFurn,...q,46,10,quiltMat,4);
+  const offsets = mattressWidth>150 ? [-43,43] : [0];
+  for(const offset of offsets){
+    const pillow = side==='E' ? [x1-44,mz+offset-30,x1-4,mz+offset+30]
+      : side==='W' ? [x0+4,mz+offset-30,x0+44,mz+offset+30]
+      : [mx+offset-30,z1-44,mx+offset+30,z1-4];
+    rbox(gFurn,...pillow,48,12,M.pillow,4);
   }
 }
 // 衣櫃：櫃體 + 門縫 + 把手
@@ -840,17 +843,28 @@ function makePlant(f, n=3){
 const done = new Set();
 const mark = (...ids) => ids.forEach(i => done.add(i));
 
-makeBed(F.bed_A, "bed_A_head", M.quiltGray);
-slab(F.bed_A_head, 0, 95, M.woodLight);
-makeBed(F.bed_B, "bed_B_head", M.quiltGray);
-slab(F.bed_B_head, 0, 95, M.woodLight);
-makeBed(F.bed_C, "bed_C_head", M.quilt);
-slab(F.bed_C_head, 0, 95, M.woodLight);
-mark("bed_A","bed_A_head","bed_B","bed_B_head","bed_C","bed_C_head");
-
-for (const id of ["closet_A","closet_B","closet_C_top","closet_C_right","closet_C_bot"]){
-  if (F[id]) { makeCloset(F[id]); mark(id); }
+makeBed(F.bed_A, 'E', 182, 188, M.quiltGray);
+makeBed(F.bed_B, 'W', 106, 188, M.quiltGray);
+makeBed(F.bed_C, 'S', 106, 188, M.quilt);
+mark('bed_A','bed_B','bed_C');
+for (const id of ['closet_A','closet_B','closet_C']){
+  if(F[id]){makeCloset(F[id]);mark(id);}
 }
+// Open steel shelving: five shelf levels, four corner posts; heights are proposals.
+for(const id of ['storage_rack_N','storage_rack_S']){
+  const f=F[id];
+  for(const x of [f.x0,f.x1-3]) for(const z of [f.y0,f.y1-3])
+    box(gFurn,x,z,x+3,z+3,0,200,M.steel);
+  for(const h of [10,55,100,145,195]) slab(f,h,3,M.woodLight);
+  mark(id);
+}
+if(F.vanity_A){
+  const f=F.vanity_A;
+  slab(f,71,4,M.lacquerW);legs(f,71,M.woodOak,4,2);
+  box(gFurn,f.x1-2,f.y0+10,f.x1,f.y1-10,95,70,M.mirror,false);
+  mark('vanity_A');
+}
+if(F.stool_A){const f=F.stool_A;slab(f,42,5,M.pillow);legs(f,42,M.woodOak,4,2);mark('stool_A');}
 // 玄關櫃（依樣品屋影片）：懸浮矮櫃 + 木檯面 + 直格柵牆板 + 三層燈帶層板
 if (F.entry_cab_F05){
   const f = F.entry_cab_F05;
@@ -882,12 +896,12 @@ if (F.entry_cab_F05){
   box(gFurn, wx, f.y1 - 3, dx + 2, f.y1, TOP_T, H - TOP_T, M.screen);
   mark("entry_cab_F05");
 }
-// 電視牆木作背板
-box(gFurn, 627, 8, 632, 300, 42, 190, M.woodLight);
+// Plain west wall, low floor-standing TV cabinet; no decorative back panel.
 if (F.tv_cab){ // 電視牆：櫃體 + 電視
   const f = F.tv_cab;
-  slab(f, 0, 42, M.lacquerW);
-  box(gFurn, f.x0-1, f.y0+8, f.x1+1, f.y1-8, 42, 4, M.woodLight);
+  slab(f, 0, 27, M.woodLight);
+  slab(f,27,3,M.counter);
+  for(let y=f.y0+56;y<f.y1;y+=56) box(gFurn,f.x1-0.6,y-0.4,f.x1,y+0.4,3,23,M.accent,false);
   box(gFurn, f.x0+2, cz(f)-70, f.x0+6, cz(f)+70, 95, 82, M.screen);
   mark("tv_cab");
 }
@@ -912,7 +926,7 @@ if (F.fridge){ const f=F.fridge; slab(f, 0, 182, M.lacquerW);
 for (const id of ["desk_A","desk_B","desk_C"]) if (F[id]){ const f=F[id]; slab(f, 71, 5, M.lacquerW); legs(f, 71, M.woodOak, 5, 3); mark(id); }
 for (const id of ["chair_A","chair_B","chair_C"]) if (F[id]){ const f=F[id];
   box(gFurn, f.x0,f.y0,f.x1,f.y1, 42, 5, M.lacquerW); legs(f, 42, M.woodOak, 3, 2);
-  box(gFurn, f.x0, f.y1-4, f.x1, f.y1, 47, 40, M.lacquerW); mark(id); }
+  box(gFurn, f.x1-4, f.y0, f.x1, f.y1, 47, 40, M.lacquerW); mark(id); }
 for (const id of ["nstand_A1","nstand_A2","nstand_C1","nstand_C2"]) if (F[id]){ const f=F[id];
   slab(f, 6, 44, M.lacquerW); box(gFurn, f.x0,f.y0,f.x1,f.y1, 50, 4, M.woodLight); mark(id); }
 if (F.cab_A){ slab(F.cab_A, 0, 60, M.woodLight); mark("cab_A"); }

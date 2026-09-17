@@ -99,15 +99,15 @@
     </div>
     <h2>房間面積（依模型估算，已扣牆柱）</h2>
     <table id="areaTbl"><thead><tr><th>房間</th><th style="text-align:right">m²</th><th style="text-align:right">坪</th></tr></thead><tbody></tbody></table>
-    <h2>尺寸表</h2><p class="note">確認值與模型差異：F01 矮櫃 150／148 cm；F04 上側衣櫃 145／139 cm。保留確認值，建模端點待核對。</p>
+    <h2>尺寸表</h2><p class="note">確認值與模型差異：F01 矮櫃 150／148 cm。保留確認值，建模端點待核對。已套用房間配置修訂；3D 已同步。</p>
     <input type="search" id="q" placeholder="搜尋編號或位置，例如 K01、臥室C">
     <table id="dimTbl"><thead><tr><th>編號</th><th>位置</th><th style="text-align:right">cm</th></tr></thead><tbody></tbody></table>
     <h2>門／開口</h2>
     <table id="doorTbl"><thead><tr><th>編號</th><th>位置</th><th style="text-align:right">cm</th></tr></thead><tbody></tbody></table>
-    <p class="note">尺寸表與圖面同源（plan_data.js）。「約」為推估，訂製前以現場實測為準。</p>
+    <p class="note">尺寸表與圖面同源（plan_2d.js）。「約」為推估，訂製前以現場實測為準。</p>
   </aside>
 </main>
-<script src="../generated/plan_data.js"></script>
+<script src="../generated/plan_2d.js"></script>
 <script>
 (function(){
   const P = window.PLAN;
@@ -152,7 +152,7 @@
       else for (let y=f.y0+10; y<f.y1; y+=12) line(L.furn, f.x0+4,y,f.x1-4,y,"#aab",0.8);
     }
   }
-  const furnLabels = [[672,750,"玄關櫃",-90],[570,609,"餐邊櫃"],[876,381,"矮櫃"],[636,150,"電視櫃",-90],[215,446,"爐台"],[355,446,"水槽"],[359,592,"冰箱"],[45,465,"AC"],[45,515,"AC"],[285,175,"床"],[507,120,"床"],[275,780,"床"],[920,210,"沙發",-90],[560,505,"餐桌",-90]];
+  const furnLabels = P.furniture_labels;
   for (const [x,y,s,rot] of furnLabels) text(L.furnlab, x,y,s,9,"#555",{rot, bg:false});
 
   // 牆、窗、欄杆、玻璃
